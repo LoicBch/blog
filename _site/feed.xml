@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.2">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2023-11-04T19:13:01+01:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">Bouchisse Loic</title><subtitle>Software architecture / DIY / mobile security</subtitle><author><name>Bouchisse Loic</name></author><entry><title type="html">Clean Ktor error handling with monads</title><link href="http://localhost:4000/2023/03/09/ktor-monad.html" rel="alternate" type="text/html" title="Clean Ktor error handling with monads" /><published>2023-03-09T00:00:00+01:00</published><updated>2023-03-09T00:00:00+01:00</updated><id>http://localhost:4000/2023/03/09/ktor-monad</id><content type="html" xml:base="http://localhost:4000/2023/03/09/ktor-monad.html"><![CDATA[<p><img src="/assets/images/failed.png" alt="Ice cream crash" /></p>
+
+<p>Recently, I had the opportunity to start a small project from scratch. The project’s purpose is to streamline user issue management and handle the administrative aspects that hosts encounter during the events in which Park4night participates.</p>
+
+<p>This provided an opportunity to build from the ground up and aim to implement a reactive HTTP layer that adheres to the best architectural practices and clean code.
+To do that i’ll use the monad design pattern and Ktor-client as the HTTP library because it’s one of the few libraries available for Kotlin Multiplatform Mobile (KMM) that is entirely written in Kotlin.</p>
+
+<h3 id="whats-a-monad-">What’s a monad ?</h3>
+
+<p>A Monad is a functional programming concept that originated from Haskell and is often used for handling exceptions. It helps manage objects that can have multiple types, and it can be thought of as a container and wrapper for different types.</p>
+
+<p>For example, the Java implementation of an <code class="language-plaintext highlighter-rouge">Either</code> Monad is a class that contains:</p>
+
+<ul>
+  <li>An optional object of generic type <code class="language-plaintext highlighter-rouge">A</code></li>
+  <li>An optional object of generic type <code class="language-plaintext highlighter-rouge">B</code>
+  Every object of type <code class="language-plaintext highlighter-rouge">Either&lt;A, B&gt;</code> can be either of type <code class="language-plaintext highlighter-rouge">A</code> or type <code class="language-plaintext highlighter-rouge">B</code>. The key point here is that we don’t need to know the type until we unwrap the <code class="language-plaintext highlighter-rouge">Either</code> object and check the type it holds.</li>
+</ul>
+
+<p>This pattern is often used with asynchronous operations, giving us the ability to perform operations that can either fail or succeed without directly handling exceptions by surrounding our code with try/catch blocks. It fits perfectly with Kotlin code because Sealed classes make it easy to represent Monads, and unlike Java, the JetBrains team decided not to enforce exception handling</p>
+
+<h3 id="ktor-client">Ktor client</h3>
+
+<p>Ktor is an open-source Kotlin framework designed for application development on both the server-side and client-side. The Ktor client module is specifically tailored for creating HTTP clients using Kotlin. It enables the creation of HTTP clients to make requests to remote servers, whether it’s for RESTful requests, data retrieval from web APIs, file downloads, and more.</p>
+
+<p>As a reminder, in KMM projects, we can’t use libraries that are written in Java. The good news is that Ktor client is written entirely in Kotlin, so we can use it in all our KMM projects.</p>
+
+<h3 id="starting-from-the-most-basic-solution">Starting from the most basic solution</h3>
+
+<p>The most basic approach of API error handling is often to have an object to 
+encapsulate the result of the request :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="kd">data class</span> <span class="nc">CallResult</span><span class="p">(</span>
+    <span class="kd">val</span> <span class="py">error</span><span class="p">:</span> <span class="nc">String</span><span class="p">?,</span>
+    <span class="kd">val</span> <span class="py">successValue</span><span class="p">:</span> <span class="nc">Any</span><span class="p">?,</span>
+    <span class="kd">val</span> <span class="py">success</span><span class="p">:</span> <span class="nc">Boolean</span>
+<span class="p">)</span></code></pre></figure>
+
+<p>And when the request result is received the instantiation of the object would look like :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">override</span> <span class="k">suspend</span> <span class="k">fun</span> <span class="nf">getProduct</span><span class="p">():</span> <span class="nc">CallResult</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">try</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">result</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="k">get</span><span class="p">(</span><span class="s">"https://google.com"</span><span class="p">)</span>
+        <span class="nc">CallResult</span><span class="p">(</span><span class="n">success</span> <span class="p">=</span> <span class="k">true</span><span class="p">,</span> 
+                   <span class="n">successValue</span> <span class="p">=</span> <span class="n">result</span><span class="p">.</span><span class="nf">body</span><span class="p">(),</span> 
+                   <span class="n">error</span> <span class="p">=</span> <span class="k">null</span><span class="p">)</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">Exception</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">(</span><span class="n">success</span> <span class="p">=</span> <span class="k">false</span><span class="p">,</span> 
+                   <span class="n">successValue</span> <span class="p">=</span> <span class="k">null</span><span class="p">,</span> 
+                   <span class="n">error</span> <span class="p">=</span> <span class="s">"An error occurred"</span><span class="p">)</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>This solution is relatively simple to implement, but it falls short of adhering to clean code principles. It lacks flexibility and can lead to the propagation of poor coding practices throughout the entire codebase. The primary issues with this basic approach are as follows:</p>
+
+<ul>
+  <li>
+    <p>The solution is not type-safe because we don’t know the type that the request will return. The ‘value’ is of type ‘Any,’ which forces us to perform type casting when unwrapping our value.</p>
+  </li>
+  <li>
+    <p>Both success and failure are managed within the same object, and the only distinguishing factor is the boolean <code class="language-plaintext highlighter-rouge">success</code>. This approach doesn’t adhere to the separation of concerns principle and doesn’t impose proper limitations. There’s nothing preventing our object from having <code class="language-plaintext highlighter-rouge">success</code> as <code class="language-plaintext highlighter-rouge">false</code> while having a value or having <code class="language-plaintext highlighter-rouge">success</code> as <code class="language-plaintext highlighter-rouge">true</code> with a non-null error.</p>
+  </li>
+  <li>
+    <p>Error origin is not properly identified in our example. We don’t differentiate between errors originating from I/O, the server, serialization, or other sources. It would be beneficial to categorize error sources so that we can handle them differently.</p>
+  </li>
+  <li>
+    <p>In the case of success, every time we want to modify the value of our object, we’ll need to check whether the object represents success or error and then modify our <code class="language-plaintext highlighter-rouge">value</code> variable. This approach leads to code repetition and is error-prone.</p>
+  </li>
+</ul>
+
+<p>We can improve our object by addressing each of these disadvantages one by one.</p>
+
+<h3 id="making-it-typesafe">Making it typesafe</h3>
+
+<p>To resolve the type problem we can make our class generic and have our class receive two type argument, 
+one for the success result value and one for the error representation :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="kd">data class</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;(</span>
+    <span class="kd">val</span> <span class="py">error</span><span class="p">:</span> <span class="nc">E</span><span class="p">?,</span>
+    <span class="kd">val</span> <span class="py">successValue</span><span class="p">:</span> <span class="nc">T</span><span class="p">?,</span>
+    <span class="kd">val</span> <span class="py">success</span><span class="p">:</span> <span class="nc">Boolean</span>
+<span class="p">)</span></code></pre></figure>
+
+<p>The instanciation :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">override</span> <span class="k">suspend</span> <span class="k">fun</span> <span class="nf">getProduct</span><span class="p">():</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">,</span> <span class="nc">ErrorMessage</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">try</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">result</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="k">get</span><span class="p">(</span><span class="s">"https://google.com"</span><span class="p">).</span><span class="n">body</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">&gt;()</span>
+        <span class="nc">CallResult</span><span class="p">(</span><span class="n">success</span> <span class="p">=</span> <span class="k">true</span><span class="p">,</span> 
+                   <span class="n">successValue</span> <span class="p">=</span> <span class="n">result</span><span class="p">,</span> 
+                   <span class="n">error</span> <span class="p">=</span> <span class="k">null</span><span class="p">)</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">Exception</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">(</span><span class="n">success</span> <span class="p">=</span> <span class="k">false</span><span class="p">,</span> 
+                   <span class="n">successValue</span> <span class="p">=</span> <span class="k">null</span><span class="p">,</span> 
+                   <span class="n">error</span> <span class="p">=</span> <span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span> <span class="o">?:</span> <span class="s">"Error"</span><span class="p">)))</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Because of Kotlin-Serialization if our <code class="language-plaintext highlighter-rouge">Product</code> data class is annotated with <code class="language-plaintext highlighter-rouge">@Serializable</code> the json representation of <code class="language-plaintext highlighter-rouge">Product</code> reveived in the request will be automaticaly serialized into a <code class="language-plaintext highlighter-rouge">Product</code> object.</p>
+
+<h3 id="separation-of-concern">Separation of concern</h3>
+
+<p>The next and most significant problem is the need to clearly distinguish between success and error cases. This is where the implementation of the monad pattern comes into play, as an API call can either result in success with a result or in an error with an error cause.</p>
+
+<p>In Kotlin, sealed classes are perfect for representing a monad, we just need to refactor our previous <code class="language-plaintext highlighter-rouge">callResult</code> object into a sealed class with sub-types to represent success and failure cases:</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">sealed</span> <span class="kd">class</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="k">out</span> <span class="nc">T</span><span class="p">,</span> <span class="k">out</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="kd">data class</span> <span class="nc">Success</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">Nothing</span><span class="p">&gt;()</span>
+    <span class="kd">data class</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">code</span><span class="p">:</span> <span class="nc">Int</span><span class="p">,</span> <span class="kd">val</span> <span class="py">value</span><span class="p">:</span> <span class="nc">E</span><span class="p">)</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;()</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>instanciation :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">override</span> <span class="k">suspend</span> <span class="k">fun</span> <span class="nf">getProduct</span><span class="p">():</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">,</span> <span class="nc">ErrorMessage</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">try</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">result</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="k">get</span><span class="p">(</span><span class="s">"https://google.com"</span><span class="p">).</span><span class="n">body</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">&gt;()</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">Exception</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span> <span class="o">?:</span> <span class="s">"Unknown error"</span><span class="p">))</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>We kept the generic right type in our sub-class and we assign <code class="language-plaintext highlighter-rouge">Nothing</code> type if the type just can’t exist here.
+This approach ensures that we have a clear and structured way to handle success and error cases, making our code more robust and maintainable.</p>
+
+<h3 id="errors-source">Errors source</h3>
+
+<p>The next goal is to represent multiple error sources. We can achieve this by making our <code class="language-plaintext highlighter-rouge">Failure</code> class also a sealed class. This allows us to enumerate the list of error sources we want to handle:</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">sealed</span> <span class="kd">class</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="k">out</span> <span class="nc">T</span><span class="p">,</span> <span class="k">out</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="kd">data class</span> <span class="nc">Success</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">Nothing</span><span class="p">&gt;()</span>
+    <span class="k">sealed</span> <span class="kd">class</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;()</span> <span class="p">{</span>
+        <span class="kd">data class</span> <span class="nc">HttpError</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">code</span><span class="p">:</span> <span class="nc">Int</span><span class="p">,</span> <span class="kd">val</span> <span class="py">errorBody</span><span class="p">:</span> <span class="nc">E</span><span class="p">)</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;()</span>
+        <span class="kd">data class</span> <span class="nc">SerializationError</span><span class="p">(</span><span class="kd">val</span> <span class="py">message</span><span class="p">:</span> <span class="nc">ErrorMessage</span><span class="p">)</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">&gt;()</span>
+        <span class="kd">object</span> <span class="nc">NetworkError</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">&gt;()</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>instanciation :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"> <span class="k">override</span> <span class="k">suspend</span> <span class="k">fun</span> <span class="nf">getProduct</span><span class="p">():</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">,</span> <span class="nc">SimpleError</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">try</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">result</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="k">get</span><span class="p">(</span><span class="s">"https://google.com"</span><span class="p">).</span><span class="n">body</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">&gt;()</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">ClientRequestException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">code</span> <span class="p">=</span> <span class="n">e</span><span class="p">.</span><span class="n">response</span><span class="p">.</span><span class="n">status</span><span class="p">.</span><span class="n">value</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">e</span><span class="p">.</span><span class="nf">errorBody</span><span class="p">())</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">SerializationException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span><span class="p">(</span><span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span><span class="p">.</span><span class="nf">toString</span><span class="p">()))</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">IOException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">NetworkError</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">JsonConvertException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span><span class="p">(</span><span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span><span class="p">.</span><span class="nf">toString</span><span class="p">()))</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">suspend</span> <span class="k">inline</span> <span class="k">fun</span> <span class="p">&lt;</span><span class="k">reified</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="nc">ResponseException</span><span class="p">.</span><span class="nf">errorBody</span><span class="p">():</span> <span class="nc">E</span><span class="p">?</span> <span class="p">=</span>
+    <span class="k">try</span> <span class="p">{</span>
+        <span class="n">response</span><span class="p">.</span><span class="nf">body</span><span class="p">()</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">SerializationException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">null</span>
+    <span class="p">}</span></code></pre></figure>
+
+<p>This allow us to have different body for different error sources, for example it doesnt make senses to have a errorCode if the error comes from I/O or serialization so we just have an object for network errors and we just have a message for the serialization errors.</p>
+
+<p>The <code class="language-plaintext highlighter-rouge">errorBody</code> extension function is just here to handle Serialization exception when serializing error object of http errors.</p>
+
+<p>When querying the request, we can now cleanly perform differents operations in the ui layers depending of the error source :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">fun</span> <span class="nf">getProduct</span><span class="p">()</span> <span class="p">{</span>
+        <span class="n">viewModelScope</span><span class="p">.</span><span class="nf">launch</span> <span class="p">{</span>
+            <span class="k">when</span> <span class="p">(</span><span class="n">api</span><span class="p">.</span><span class="nf">fetchEvents</span><span class="p">())</span> <span class="p">{</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span> 
+                    <span class="c1">//Do something with result </span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span> <span class="p">-&gt;</span> 
+                    <span class="c1">//Show popup Error</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">NetworkError</span> <span class="p">-&gt;</span> 
+                    <span class="c1">//Show connection error</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span> <span class="p">-&gt;</span> 
+                    <span class="c1">//Show serialization error</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span></code></pre></figure>
+
+<p>Because the <code class="language-plaintext highlighter-rouge">when</code> expression forces us to handle all cases of the sealed classes, there might be situations where we only want to handle specific error sources while ignoring others. In such cases, we can extract the <code class="language-plaintext highlighter-rouge">when</code> expression into an extension function on <code class="language-plaintext highlighter-rouge">Result.Failure</code> to obtain the correct code and error message directly, without the need to check the error source each time:</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">fun</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nf">Failure</span><span class="p">&lt;*&gt;.</span><span class="nf">message</span><span class="p">()</span> <span class="p">=</span> <span class="k">when</span> <span class="p">(</span><span class="k">this</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span><span class="p">&lt;</span><span class="err">*</span><span class="p">&gt;</span> <span class="p">-&gt;</span> 
+        <span class="k">if</span> <span class="p">(</span><span class="k">this</span><span class="p">.</span><span class="n">errorBody</span> <span class="k">is</span> <span class="nc">ErrorMessage</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="n">errorBody</span><span class="p">.</span><span class="n">message</span> <span class="k">else</span> <span class="s">"An http error occurred"</span>
+    <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span> <span class="p">-&gt;</span> <span class="k">this</span><span class="p">.</span><span class="n">error</span><span class="p">.</span><span class="n">message</span>
+    <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">NetworkError</span> <span class="p">-&gt;</span> <span class="k">this</span><span class="p">.</span><span class="n">message</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>And use it like so :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">fun</span> <span class="nf">getProduct</span><span class="p">()</span> <span class="p">{</span>
+        <span class="n">viewModelScope</span><span class="p">.</span><span class="nf">launch</span> <span class="p">{</span>
+            <span class="k">when</span> <span class="p">(</span><span class="kd">val</span> <span class="py">result</span> <span class="p">=</span> <span class="n">api</span><span class="p">.</span><span class="nf">fetchEvents</span><span class="p">())</span> <span class="p">{</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span> <span class="c1">//Do something with result</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span> <span class="p">-&gt;</span> <span class="nc">Log</span><span class="p">.</span><span class="nf">d</span><span class="p">(</span><span class="s">"Show"</span><span class="p">,</span> <span class="n">result</span><span class="p">.</span><span class="nf">message</span><span class="p">())</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span></code></pre></figure>
+
+<h3 id="modification-on-the-fly">Modification on the fly</h3>
+
+<p>At this stage if we want to modify the value of our object after instanciation we would have to unwrapp our monad, check if the type is a success or failure and modify the value of the success object.
+This is repetitive and it force to have this type of code block at each modification :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">return</span> <span class="k">when</span> <span class="p">(</span><span class="n">response</span><span class="p">){</span>
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="c1">//new Value)</span>
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span> <span class="p">-&gt;</span> <span class="n">response</span>
+    <span class="p">}</span></code></pre></figure>
+
+<p>To avoid this, we can define an extension function <code class="language-plaintext highlighter-rouge">map</code> that take the new value to assign and do this under the hood :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">fun</span> <span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">,</span> <span class="nc">U</span><span class="p">&gt;</span> <span class="nf">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;.</span><span class="nf">map</span><span class="p">(</span>
+    <span class="n">transform</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="p">-&gt;</span> <span class="nc">U</span>
+<span class="p">):</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">U</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">when</span> <span class="p">(</span><span class="k">this</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span> <span class="p">{</span>
+            <span class="n">value</span><span class="o">?.</span><span class="nf">let</span> <span class="p">{</span>
+                <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="nf">transform</span><span class="p">(</span><span class="n">it</span><span class="p">))</span>
+            <span class="p">}</span> <span class="o">?:</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="k">null</span> <span class="k">as</span> <span class="nc">U</span><span class="p">)</span>
+        <span class="p">}</span>
+
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span> <span class="p">-&gt;</span> <span class="k">this</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Here we can modify the value of result WITHOUT handling the case of a failure.
+If the value is here we modify it else we don’t change the current monad and we only be able to see if it fail or succeed at the end of the road.</p>
+
+<p>We have three generic :</p>
+<ul>
+  <li>T : the current type of success</li>
+  <li>E : the current type of error</li>
+  <li>U : the new type after the modification</li>
+</ul>
+
+<p>It takes the <code class="language-plaintext highlighter-rouge">transform</code> lambdas in parameter.
+We could have the same function <code class="language-plaintext highlighter-rouge">mapError</code> to map error case
+In the same way we could also handle the case in wich we has to perform another api request that return a monad inside our <code class="language-plaintext highlighter-rouge">transform</code> lambdas, this would look like :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">suspend</span> <span class="k">fun</span> <span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">,</span> <span class="nc">U</span><span class="p">&gt;</span> <span class="nf">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;.</span><span class="nf">andThen</span><span class="p">(</span>
+    <span class="n">transform</span><span class="p">:</span> <span class="k">suspend</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="p">-&gt;</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">U</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;</span>
+<span class="p">):</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">U</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">when</span> <span class="p">(</span><span class="k">this</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span> <span class="p">{</span>
+            <span class="n">value</span><span class="o">?.</span><span class="nf">let</span> <span class="p">{</span>
+                <span class="nf">transform</span><span class="p">(</span><span class="n">it</span><span class="p">)</span>
+            <span class="p">}</span> <span class="o">?:</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="k">null</span> <span class="k">as</span> <span class="nc">U</span><span class="p">)</span>
+        <span class="p">}</span>
+        <span class="k">is</span> <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span> <span class="p">-&gt;</span> <span class="k">this</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>We added <code class="language-plaintext highlighter-rouge">suspend</code> keyword and changed return type of transform function, we also then just return the result of the transform function as it alerady return a monad. 
+These map functions are similar to those used in functional asynchronous libraries, such as <code class="language-plaintext highlighter-rouge">flatMap</code> in RxJava. 
+These asynchronous libraries in Java follow the same functional pattern rather than traditional Java exception handling. 
+They gained popularity because they provide a more reactive approach for performing asynchronous operations because it let’s you choose WHEN you want to handle exception, a liberty that was not really easy to have in java because of forced exception.</p>
+
+<p>A real life example of the map and thenCall function from another project :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">return</span> <span class="n">api</span><span class="p">.</span><span class="nf">fetchEventById</span><span class="p">(</span><span class="n">eventId</span><span class="p">)</span>
+            <span class="p">.</span><span class="nf">map</span> <span class="p">{</span> <span class="n">event</span> <span class="p">-&gt;</span>
+                <span class="kd">val</span> <span class="py">eventDays</span> <span class="p">=</span> <span class="nf">createInitialEventArray</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+                <span class="kd">val</span> <span class="py">productsFormatted</span> <span class="p">=</span> <span class="nf">formatEventProducts</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+                <span class="n">productsWithDays</span> <span class="p">=</span> <span class="nf">associateProductsToDays</span><span class="p">(</span><span class="n">eventDays</span><span class="p">,</span> <span class="n">productsFormatted</span><span class="p">)</span>
+                <span class="n">event</span>
+            <span class="p">}</span>
+            <span class="p">.</span><span class="nf">andThen</span> <span class="p">{</span>
+                <span class="n">api</span><span class="p">.</span><span class="nf">fetchPayments</span><span class="p">(</span><span class="n">it</span><span class="p">.</span><span class="n">dateStart</span><span class="p">,</span> <span class="n">it</span><span class="p">.</span><span class="n">dateEnd</span><span class="p">,</span> <span class="n">eventId</span><span class="p">)</span>
+            <span class="p">}</span>
+            <span class="p">.</span><span class="nf">map</span> <span class="p">{</span> <span class="n">payments</span> <span class="p">-&gt;</span>
+                <span class="n">productsWithDays</span> <span class="p">=</span> <span class="nf">associatePaymentToProducts</span><span class="p">(</span><span class="n">payments</span><span class="p">,</span> <span class="n">productsWithDays</span><span class="p">)</span>
+                <span class="nf">formatTitleDateOfDays</span><span class="p">(</span><span class="n">productsWithDays</span><span class="p">)</span>
+            <span class="p">}</span></code></pre></figure>
+
+<p>Here in the first map function i’m modifying the object i get from the first request, 
+then im using <code class="language-plaintext highlighter-rouge">thenCall</code> function to make another api request with the modifyng result of the first call.
+Finaly my usecase is returning the modified result of the second apicall.</p>
+
+<h3 id="the-final-solution">The final Solution</h3>
+
+<h4 id="our-callresult-object">Our <code class="language-plaintext highlighter-rouge">CallResult</code> object</h4>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">sealed</span> <span class="kd">class</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="k">out</span> <span class="nc">T</span><span class="p">,</span> <span class="k">out</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="kd">data class</span> <span class="nc">Success</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">Nothing</span><span class="p">&gt;()</span>
+    <span class="k">sealed</span> <span class="kd">class</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;</span> <span class="p">:</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;()</span> <span class="p">{</span>
+        <span class="kd">data class</span> <span class="nc">HttpError</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;(</span><span class="kd">val</span> <span class="py">code</span><span class="p">:</span> <span class="nc">Int</span><span class="p">,</span> <span class="kd">val</span> <span class="py">errorBody</span><span class="p">:</span> <span class="nc">E</span><span class="p">?)</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">E</span><span class="p">&gt;()</span>
+        <span class="kd">data class</span> <span class="nc">SerializationError</span><span class="p">(</span><span class="kd">val</span> <span class="py">message</span><span class="p">:</span> <span class="nc">ErrorMessage</span><span class="p">)</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">&gt;()</span>
+        <span class="kd">object</span> <span class="nc">NetworkError</span> <span class="p">:</span> <span class="nc">Failure</span><span class="p">&lt;</span><span class="nc">Nothing</span><span class="p">&gt;()</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<h4 id="the-object-instantiation">The object instantiation</h4>
+
+<p>The last step to simplify our previous instantiation in a single function that will be an extension function of Ktor HttpClient :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">suspend</span> <span class="k">inline</span> <span class="k">fun</span> <span class="p">&lt;</span><span class="k">reified</span> <span class="nc">T</span><span class="p">,</span> <span class="k">reified</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="nc">HttpClient</span><span class="p">.</span><span class="nf">safeGet</span><span class="p">(</span><span class="n">block</span><span class="p">:</span> <span class="nc">HttpRequestBuilder</span><span class="p">.()</span> <span class="p">-&gt;</span> <span class="nc">Unit</span><span class="p">):</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="k">try</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">response</span> <span class="p">=</span> <span class="k">get</span> <span class="p">{</span> <span class="nf">block</span><span class="p">()</span> <span class="p">}</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">response</span><span class="p">.</span><span class="n">status</span><span class="p">.</span><span class="nf">isSuccess</span><span class="p">())</span> <span class="p">{</span>
+            <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Success</span><span class="p">(</span><span class="n">response</span><span class="p">.</span><span class="nf">body</span><span class="p">())</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="kd">val</span> <span class="py">code</span> <span class="p">=</span> <span class="n">response</span><span class="p">.</span><span class="n">status</span><span class="p">.</span><span class="n">value</span>
+            <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">response</span><span class="p">.</span><span class="nf">body</span><span class="p">())</span>
+        <span class="p">}</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">ClientRequestException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="kd">val</span> <span class="py">code</span> <span class="p">=</span> <span class="n">e</span><span class="p">.</span><span class="n">response</span><span class="p">.</span><span class="n">status</span><span class="p">.</span><span class="n">value</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">e</span><span class="p">.</span><span class="nf">errorBody</span><span class="p">())</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">SerializationException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span><span class="p">(</span><span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span><span class="p">.</span><span class="nf">toString</span><span class="p">()))</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">IOException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">NetworkError</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="n">e</span><span class="p">:</span> <span class="nc">JsonConvertException</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nc">CallResult</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span><span class="p">(</span><span class="nc">ErrorMessage</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span><span class="p">.</span><span class="nf">toString</span><span class="p">()))</span>
+    <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>the function take the lambdas that return an object <code class="language-plaintext highlighter-rouge">T</code> in argument
+and we can now have a function for each Http method safeGet, safePost etc by just replacing the 
+<code class="language-plaintext highlighter-rouge">get { block() }</code> by <code class="language-plaintext highlighter-rouge">post { block() }</code></p>
+
+<p>With these extension functions all the complexity of creating the monad is abstracted away and the api calls in our dataLayer become really clean and simple to use :</p>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">override</span> <span class="k">suspend</span> <span class="k">fun</span> <span class="nf">getProduct</span><span class="p">():</span> <span class="nc">CallResult</span><span class="p">&lt;</span><span class="nc">Product</span><span class="p">,</span> <span class="nc">SimpleError</span><span class="p">&gt;</span> 
+<span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="nf">safeGet</span> <span class="p">{</span>
+        <span class="nf">url</span><span class="p">(</span><span class="nc">Constants</span><span class="p">.</span><span class="nc">Api</span><span class="p">.</span><span class="nc">PRODUCT</span><span class="p">)</span>
+    <span class="p">}</span></code></pre></figure>
+
+<p>1 clean expression, perfect !</p>
+
+<h4 id="the-apicall-from-viewmodel">The ApiCall from viewmodel</h4>
+
+<figure class="highlight"><pre><code class="language-kotlin" data-lang="kotlin"><span class="k">fun</span> <span class="nf">getProduct</span><span class="p">()</span> <span class="p">{</span>
+        <span class="n">viewModelScope</span><span class="p">.</span><span class="nf">launch</span> <span class="p">{</span>
+            <span class="k">when</span> <span class="p">(</span><span class="n">api</span><span class="p">.</span><span class="nf">fetchEvents</span><span class="p">())</span> <span class="p">{</span>
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Success</span> <span class="p">-&gt;</span>  
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">HttpError</span> <span class="p">-&gt;</span> 
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">NetworkError</span> <span class="p">-&gt;</span> 
+                <span class="k">is</span> <span class="nc">ResultWrapper</span><span class="p">.</span><span class="nc">Failure</span><span class="p">.</span><span class="nc">SerializationError</span> <span class="p">-&gt;</span> 
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span></code></pre></figure>]]></content><author><name>Bouchisse Loic</name></author><summary type="html"><![CDATA[Recently, I had the opportunity to start a small project from scratch. The project’s purpose is to streamline user issue management and handle the administrative aspects that hosts encounter during the events in which Park4night participates. This provided an opportunity to build from the ground up and aim to implement a reactive HTTP layer that adheres to the best architectural practices and clean code. To do that i’ll use the monad design pattern and Ktor-client as the HTTP library because it’s one of the few libraries available for Kotlin Multiplatform Mobile (KMM) that is entirely written in Kotlin. What’s a monad ? A Monad is a functional programming concept that originated from Haskell and is often used for handling exceptions. It helps manage objects that can have multiple types, and it can be thought of as a container and wrapper for different types. For example, the Java implementation of an Either Monad is a class that contains: An optional object of generic type A An optional object of generic type B Every object of type Either&lt;A, B&gt; can be either of type A or type B. The key point here is that we don’t need to know the type until we unwrap the Either object and check the type it holds. This pattern is often used with asynchronous operations, giving us the ability to perform operations that can either fail or succeed without directly handling exceptions by surrounding our code with try/catch blocks. It fits perfectly with Kotlin code because Sealed classes make it easy to represent Monads, and unlike Java, the JetBrains team decided not to enforce exception handling Ktor client Ktor is an open-source Kotlin framework designed for application development on both the server-side and client-side. The Ktor client module is specifically tailored for creating HTTP clients using Kotlin. It enables the creation of HTTP clients to make requests to remote servers, whether it’s for RESTful requests, data retrieval from web APIs, file downloads, and more. As a reminder, in KMM projects, we can’t use libraries that are written in Java. The good news is that Ktor client is written entirely in Kotlin, so we can use it in all our KMM projects. Starting from the most basic solution The most basic approach of API error handling is often to have an object to encapsulate the result of the request : data class CallResult( val error: String?, val successValue: Any?, val success: Boolean ) And when the request result is received the instantiation of the object would look like : override suspend fun getProduct(): CallResult { return try { val result = client.get("https://google.com") CallResult(success = true, successValue = result.body(), error = null) } catch (e: Exception) { CallResult(success = false, successValue = null, error = "An error occurred") } } This solution is relatively simple to implement, but it falls short of adhering to clean code principles. It lacks flexibility and can lead to the propagation of poor coding practices throughout the entire codebase. The primary issues with this basic approach are as follows: The solution is not type-safe because we don’t know the type that the request will return. The ‘value’ is of type ‘Any,’ which forces us to perform type casting when unwrapping our value. Both success and failure are managed within the same object, and the only distinguishing factor is the boolean success. This approach doesn’t adhere to the separation of concerns principle and doesn’t impose proper limitations. There’s nothing preventing our object from having success as false while having a value or having success as true with a non-null error. Error origin is not properly identified in our example. We don’t differentiate between errors originating from I/O, the server, serialization, or other sources. It would be beneficial to categorize error sources so that we can handle them differently. In the case of success, every time we want to modify the value of our object, we’ll need to check whether the object represents success or error and then modify our value variable. This approach leads to code repetition and is error-prone. We can improve our object by addressing each of these disadvantages one by one. Making it typesafe To resolve the type problem we can make our class generic and have our class receive two type argument, one for the success result value and one for the error representation : data class CallResult&lt;T, E&gt;( val error: E?, val successValue: T?, val success: Boolean ) The instanciation : override suspend fun getProduct(): CallResult&lt;Product, ErrorMessage&gt; { return try { val result = client.get("https://google.com").body&lt;Product&gt;() CallResult(success = true, successValue = result, error = null) } catch (e: Exception) { CallResult(success = false, successValue = null, error = ErrorMessage(e.message ?: "Error"))) } } Because of Kotlin-Serialization if our Product data class is annotated with @Serializable the json representation of Product reveived in the request will be automaticaly serialized into a Product object. Separation of concern The next and most significant problem is the need to clearly distinguish between success and error cases. This is where the implementation of the monad pattern comes into play, as an API call can either result in success with a result or in an error with an error cause. In Kotlin, sealed classes are perfect for representing a monad, we just need to refactor our previous callResult object into a sealed class with sub-types to represent success and failure cases: sealed class CallResult&lt;out T, out E&gt; { data class Success&lt;T&gt;(val value: T) : CallResult&lt;T, Nothing&gt;() data class Failure&lt;E&gt;(val code: Int, val value: E) : CallResult&lt;Nothing, E&gt;() } instanciation : override suspend fun getProduct(): CallResult&lt;Product, ErrorMessage&gt; { return try { val result = client.get("https://google.com").body&lt;Product&gt;() CallResult.Success(result) } catch (e: Exception) { CallResult.Failure(0, ErrorMessage(e.message ?: "Unknown error")) } } We kept the generic right type in our sub-class and we assign Nothing type if the type just can’t exist here. This approach ensures that we have a clear and structured way to handle success and error cases, making our code more robust and maintainable. Errors source The next goal is to represent multiple error sources. We can achieve this by making our Failure class also a sealed class. This allows us to enumerate the list of error sources we want to handle: sealed class CallResult&lt;out T, out E&gt; { data class Success&lt;T&gt;(val value: T) : CallResult&lt;T, Nothing&gt;() sealed class Failure&lt;E&gt; : CallResult&lt;Nothing, E&gt;() { data class HttpError&lt;E&gt;(val code: Int, val errorBody: E) : Failure&lt;E&gt;() data class SerializationError(val message: ErrorMessage) : Failure&lt;Nothing&gt;() object NetworkError : Failure&lt;Nothing&gt;() } } instanciation : override suspend fun getProduct(): CallResult&lt;Product, SimpleError&gt; { return try { val result = client.get("https://google.com").body&lt;Product&gt;() CallResult.Success(result) } catch (e: ClientRequestException) { val code = e.response.status.value CallResult.Failure.HttpError(code, e.errorBody()) } catch (e: SerializationException) { CallResult.Failure.SerializationError(ErrorMessage(e.message.toString())) } catch (e: IOException) { CallResult.Failure.NetworkError } catch (e: JsonConvertException) { CallResult.Failure.SerializationError(ErrorMessage(e.message.toString())) } } suspend inline fun &lt;reified E&gt; ResponseException.errorBody(): E? = try { response.body() } catch (e: SerializationException) { null } This allow us to have different body for different error sources, for example it doesnt make senses to have a errorCode if the error comes from I/O or serialization so we just have an object for network errors and we just have a message for the serialization errors. The errorBody extension function is just here to handle Serialization exception when serializing error object of http errors. When querying the request, we can now cleanly perform differents operations in the ui layers depending of the error source : fun getProduct() { viewModelScope.launch { when (api.fetchEvents()) { is ResultWrapper.Success -&gt; //Do something with result is ResultWrapper.Failure.HttpError -&gt; //Show popup Error is ResultWrapper.Failure.NetworkError -&gt; //Show connection error is ResultWrapper.Failure.SerializationError -&gt; //Show serialization error } } } Because the when expression forces us to handle all cases of the sealed classes, there might be situations where we only want to handle specific error sources while ignoring others. In such cases, we can extract the when expression into an extension function on Result.Failure to obtain the correct code and error message directly, without the need to check the error source each time: fun ResultWrapper.Failure&lt;*&gt;.message() = when (this) { is ResultWrapper.Failure.HttpError&lt;*&gt; -&gt; if (this.errorBody is ErrorMessage) this.errorBody.message else "An http error occurred" is ResultWrapper.Failure.SerializationError -&gt; this.error.message is ResultWrapper.Failure.NetworkError -&gt; this.message } And use it like so : fun getProduct() { viewModelScope.launch { when (val result = api.fetchEvents()) { is ResultWrapper.Success -&gt; //Do something with result is ResultWrapper.Failure -&gt; Log.d("Show", result.message()) } } } Modification on the fly At this stage if we want to modify the value of our object after instanciation we would have to unwrapp our monad, check if the type is a success or failure and modify the value of the success object. This is repetitive and it force to have this type of code block at each modification : return when (response){ is CallResult.Success -&gt; CallResult.Success(//new Value) is CallResult.Failure -&gt; response } To avoid this, we can define an extension function map that take the new value to assign and do this under the hood : fun &lt;T, E, U&gt; CallResult&lt;T, E&gt;.map( transform: (T) -&gt; U ): CallResult&lt;U, E&gt; { return when (this) { is CallResult.Success -&gt; { value?.let { CallResult.Success(transform(it)) } ?: CallResult.Success(null as U) } is CallResult.Failure -&gt; this } } Here we can modify the value of result WITHOUT handling the case of a failure. If the value is here we modify it else we don’t change the current monad and we only be able to see if it fail or succeed at the end of the road. We have three generic : T : the current type of success E : the current type of error U : the new type after the modification It takes the transform lambdas in parameter. We could have the same function mapError to map error case In the same way we could also handle the case in wich we has to perform another api request that return a monad inside our transform lambdas, this would look like : suspend fun &lt;T, E, U&gt; CallResult&lt;T, E&gt;.andThen( transform: suspend (T) -&gt; CallResult&lt;U, E&gt; ): CallResult&lt;U, E&gt; { return when (this) { is CallResult.Success -&gt; { value?.let { transform(it) } ?: CallResult.Success(null as U) } is CallResult.Failure -&gt; this } } We added suspend keyword and changed return type of transform function, we also then just return the result of the transform function as it alerady return a monad. These map functions are similar to those used in functional asynchronous libraries, such as flatMap in RxJava. These asynchronous libraries in Java follow the same functional pattern rather than traditional Java exception handling. They gained popularity because they provide a more reactive approach for performing asynchronous operations because it let’s you choose WHEN you want to handle exception, a liberty that was not really easy to have in java because of forced exception. A real life example of the map and thenCall function from another project : return api.fetchEventById(eventId) .map { event -&gt; val eventDays = createInitialEventArray(event) val productsFormatted = formatEventProducts(event) productsWithDays = associateProductsToDays(eventDays, productsFormatted) event } .andThen { api.fetchPayments(it.dateStart, it.dateEnd, eventId) } .map { payments -&gt; productsWithDays = associatePaymentToProducts(payments, productsWithDays) formatTitleDateOfDays(productsWithDays) } Here in the first map function i’m modifying the object i get from the first request, then im using thenCall function to make another api request with the modifyng result of the first call. Finaly my usecase is returning the modified result of the second apicall. The final Solution Our CallResult object sealed class CallResult&lt;out T, out E&gt; { data class Success&lt;T&gt;(val value: T) : CallResult&lt;T, Nothing&gt;() sealed class Failure&lt;E&gt; : CallResult&lt;Nothing, E&gt;() { data class HttpError&lt;E&gt;(val code: Int, val errorBody: E?) : Failure&lt;E&gt;() data class SerializationError(val message: ErrorMessage) : Failure&lt;Nothing&gt;() object NetworkError : Failure&lt;Nothing&gt;() } } The object instantiation The last step to simplify our previous instantiation in a single function that will be an extension function of Ktor HttpClient : suspend inline fun &lt;reified T, reified E&gt; HttpClient.safeGet(block: HttpRequestBuilder.() -&gt; Unit): CallResult&lt;T, E&gt; { return try { val response = get { block() } if (response.status.isSuccess()) { CallResult.Success(response.body()) } else { val code = response.status.value CallResult.Failure.HttpError(code, response.body()) } } catch (e: ClientRequestException) { val code = e.response.status.value CallResult.Failure.HttpError(code, e.errorBody()) } catch (e: SerializationException) { CallResult.Failure.SerializationError(ErrorMessage(e.message.toString())) } catch (e: IOException) { CallResult.Failure.NetworkError } catch (e: JsonConvertException) { CallResult.Failure.SerializationError(ErrorMessage(e.message.toString())) } } the function take the lambdas that return an object T in argument and we can now have a function for each Http method safeGet, safePost etc by just replacing the get { block() } by post { block() } With these extension functions all the complexity of creating the monad is abstracted away and the api calls in our dataLayer become really clean and simple to use : override suspend fun getProduct(): CallResult&lt;Product, SimpleError&gt; = client.safeGet { url(Constants.Api.PRODUCT) } 1 clean expression, perfect ! The ApiCall from viewmodel fun getProduct() { viewModelScope.launch { when (api.fetchEvents()) { is ResultWrapper.Success -&gt; is ResultWrapper.Failure.HttpError -&gt; is ResultWrapper.Failure.NetworkError -&gt; is ResultWrapper.Failure.SerializationError -&gt; } } }]]></summary></entry></feed>
