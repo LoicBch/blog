@@ -5,7 +5,7 @@ excerpt_separator:  <!--more-->
 subtitle: A clean implementation of http layer using Ktor and monad pattern that let you cleanly handle multiple error sources and abstracting all complexity in extension and monad mapping function.
 --- 
 
-![Ice cream crash]({{ site.baseurl }}/assets/images/failed.png)
+![Ice cream crash](blog/assets/images/failed.png)
 
 Recently, I had the opportunity to start a small project from scratch. The project's purpose is to streamline user issue management and handle the administrative aspects that hosts encounter during the events in which Park4night participates.
 
